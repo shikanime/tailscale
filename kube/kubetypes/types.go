@@ -17,6 +17,8 @@ const (
 	// Clientmetrics for Tailscale Kubernetes Operator components
 	MetricIngressProxyCount              = "k8s_ingress_proxies"   // L3
 	MetricIngressResourceCount           = "k8s_ingress_resources" // L7
+	MetricGatewayResourceCount           = "k8s_gateway_resources"
+	MetricGatewayHTTPRouteResourceCount  = "k8s_gateway_httproute_resources"
 	MetricEgressProxyCount               = "k8s_egress_proxies"
 	MetricConnectorResourceCount         = "k8s_connector_resources"
 	MetricConnectorWithSubnetRouterCount = "k8s_connector_subnetrouter_resources"
