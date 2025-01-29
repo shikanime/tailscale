@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 // SchemeGroupVersion is group version used to register these objects
@@ -51,6 +52,10 @@ func init() {
 	// Add apiextensions types (CustomResourceDefinitions/CustomResourceDefinitionLists)
 	if err := apiextensionsv1.AddToScheme(GlobalScheme); err != nil {
 		panic(fmt.Sprintf("failed to add apiextensions.k8s.io scheme: %s", err))
+	}
+	// Add gateway types
+	if err := gatewayv1.AddToScheme(GlobalScheme); err != nil {
+		panic(fmt.Sprintf("failed to add gateway.networking.k8s.io scheme: %s", err))
 	}
 }
 
