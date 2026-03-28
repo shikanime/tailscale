@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
+	"tailscale.com/ipn"
 	tsapi "tailscale.com/k8s-operator/apis/v1alpha1"
 	"tailscale.com/kube/kubetypes"
 )
@@ -313,6 +314,32 @@ func Test_applyProxyClassToStatefulSet(t *testing.T) {
 	// 8. A Kubernetes API proxy with letsencrypt staging enabled
 	gotSS = applyProxyClassToStatefulSet(proxyClassAllOpts, nonUserspaceProxySS.DeepCopy(), &tailscaleSTSConfig{proxyType: string(tsapi.ProxyGroupTypeKubernetesAPIServer)}, zl.Sugar())
 	verifyEnvVar(t, gotSS, "TS_DEBUG_ACME_DIRECTORY_URL", letsEncryptStagingEndpoint)
+
+	// 9. Default affinity inherits the target Service selector when ProxyClass doesn't set affinity.
+	wantSS = nonUserspaceProxySS.DeepCopy()
+	selector := map[string]string{"app": "nginx"}
+	wantSS.Spec.Template.Spec.Affinity = affinityFromServiceSelector("default", selector)
+	gotSS = applyProxyClassToStatefulSet(&tsapi.ProxyClass{}, nonUserspaceProxySS.DeepCopy(), &tailscaleSTSConfig{
+		ParentResourceNamespace:      "default",
+		ClusterTargetIP:              "10.20.30.40",
+		ClusterTargetServiceSelector: selector,
+	}, zl.Sugar())
+	if diff := cmp.Diff(gotSS, wantSS); diff != "" {
+		t.Errorf("Unexpected result applying default affinity from Service selector (-got +want):\n%s", diff)
+	}
+
+	// 10. Default affinity also applies to Ingress proxies (ServeConfig set) without requiring ClusterTargetIP.
+	wantSS = nonUserspaceProxySS.DeepCopy()
+	selector = map[string]string{"app": "nginx"}
+	wantSS.Spec.Template.Spec.Affinity = affinityFromServiceSelector("default", selector)
+	gotSS = applyProxyClassToStatefulSet(&tsapi.ProxyClass{}, nonUserspaceProxySS.DeepCopy(), &tailscaleSTSConfig{
+		ParentResourceNamespace:      "default",
+		ServeConfig:                  &ipn.ServeConfig{},
+		ClusterTargetServiceSelector: selector,
+	}, zl.Sugar())
+	if diff := cmp.Diff(gotSS, wantSS); diff != "" {
+		t.Errorf("Unexpected result applying default affinity for ingress proxy (-got +want):\n%s", diff)
+	}
 }
 
 func Test_mergeStatefulSetLabelsOrAnnots(t *testing.T) {
