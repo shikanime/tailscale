@@ -118,14 +118,16 @@ var (
 )
 
 type tailscaleSTSConfig struct {
-	Replicas            int32
-	ParentResourceName  string
-	ParentResourceUID   string
-	ChildResourceLabels map[string]string
+	Replicas                int32
+	ParentResourceName      string
+	ParentResourceNamespace string
+	ParentResourceUID       string
+	ChildResourceLabels     map[string]string
 
-	ServeConfig          *ipn.ServeConfig // if serve config is set, this is a proxy for Ingress
-	ClusterTargetIP      string           // ingress target IP
-	ClusterTargetDNSName string           // ingress target DNS name
+	ServeConfig                  *ipn.ServeConfig // if serve config is set, this is a proxy for Ingress
+	ClusterTargetIP              string           // ingress target IP
+	ClusterTargetDNSName         string           // ingress target DNS name
+	ClusterTargetServiceSelector map[string]string
 	// If set to true, operator should configure containerboot to forward
 	// cluster traffic via the proxy set up for Kubernetes Ingress.
 	ForwardClusterTrafficViaL7IngressProxy bool
@@ -926,95 +928,132 @@ func applyProxyClassToStatefulSet(pc *tsapi.ProxyClass, ss *appsv1.StatefulSet, 
 		}
 	}
 
-	if pc.Spec.StatefulSet == nil {
-		return ss
-	}
-
-	// Update StatefulSet metadata.
-	if wantsSSLabels := pc.Spec.StatefulSet.Labels.Parse(); len(wantsSSLabels) > 0 {
-		ss.ObjectMeta.Labels = mergeStatefulSetLabelsOrAnnots(ss.ObjectMeta.Labels, wantsSSLabels, tailscaleManagedLabels)
-	}
-	if wantsSSAnnots := pc.Spec.StatefulSet.Annotations; len(wantsSSAnnots) > 0 {
-		ss.ObjectMeta.Annotations = mergeStatefulSetLabelsOrAnnots(ss.ObjectMeta.Annotations, wantsSSAnnots, tailscaleManagedAnnotations)
-	}
-
-	// Update Pod fields.
-	if pc.Spec.StatefulSet.Pod == nil {
-		return ss
-	}
-	wantsPod := pc.Spec.StatefulSet.Pod
-	if wantsPodLabels := wantsPod.Labels.Parse(); len(wantsPodLabels) > 0 {
-		ss.Spec.Template.ObjectMeta.Labels = mergeStatefulSetLabelsOrAnnots(ss.Spec.Template.ObjectMeta.Labels, wantsPodLabels, tailscaleManagedLabels)
-	}
-	if wantsPodAnnots := wantsPod.Annotations; len(wantsPodAnnots) > 0 {
-		ss.Spec.Template.ObjectMeta.Annotations = mergeStatefulSetLabelsOrAnnots(ss.Spec.Template.ObjectMeta.Annotations, wantsPodAnnots, tailscaleManagedAnnotations)
-	}
-	ss.Spec.Template.Spec.SecurityContext = wantsPod.SecurityContext
-	ss.Spec.Template.Spec.ImagePullSecrets = wantsPod.ImagePullSecrets
-	ss.Spec.Template.Spec.NodeName = wantsPod.NodeName
-	ss.Spec.Template.Spec.NodeSelector = wantsPod.NodeSelector
-	ss.Spec.Template.Spec.Affinity = wantsPod.Affinity
-	ss.Spec.Template.Spec.Tolerations = wantsPod.Tolerations
-	ss.Spec.Template.Spec.PriorityClassName = wantsPod.PriorityClassName
-	ss.Spec.Template.Spec.TopologySpreadConstraints = wantsPod.TopologySpreadConstraints
-	if wantsPod.DNSPolicy != nil {
-		ss.Spec.Template.Spec.DNSPolicy = *wantsPod.DNSPolicy
-	}
-	if wantsPod.DNSConfig != nil {
-		ss.Spec.Template.Spec.DNSConfig = wantsPod.DNSConfig
-	}
-
-	// Update containers.
-	updateContainer := func(overlay *tsapi.Container, base corev1.Container) corev1.Container {
-		if overlay == nil {
-			return base
+	if pc.Spec.StatefulSet != nil {
+		// Update StatefulSet metadata.
+		if wantsSSLabels := pc.Spec.StatefulSet.Labels.Parse(); len(wantsSSLabels) > 0 {
+			ss.ObjectMeta.Labels = mergeStatefulSetLabelsOrAnnots(ss.ObjectMeta.Labels, wantsSSLabels, tailscaleManagedLabels)
 		}
-		if overlay.SecurityContext != nil {
-			base.SecurityContext = overlay.SecurityContext
+		if wantsSSAnnots := pc.Spec.StatefulSet.Annotations; len(wantsSSAnnots) > 0 {
+			ss.ObjectMeta.Annotations = mergeStatefulSetLabelsOrAnnots(ss.ObjectMeta.Annotations, wantsSSAnnots, tailscaleManagedAnnotations)
 		}
 
-		if len(overlay.Resources.Requests) > 0 {
-			base.Resources.Requests = overlay.Resources.Requests
-		}
-		if len(overlay.Resources.Limits) > 0 {
-			base.Resources.Limits = overlay.Resources.Limits
-		}
-		if len(overlay.Resources.Claims) > 0 {
-			base.Resources.Limits = overlay.Resources.Limits
-		}
+		// Update Pod fields.
+		if pc.Spec.StatefulSet.Pod != nil {
+			wantsPod := pc.Spec.StatefulSet.Pod
+			if wantsPodLabels := wantsPod.Labels.Parse(); len(wantsPodLabels) > 0 {
+				ss.Spec.Template.ObjectMeta.Labels = mergeStatefulSetLabelsOrAnnots(ss.Spec.Template.ObjectMeta.Labels, wantsPodLabels, tailscaleManagedLabels)
+			}
+			if wantsPodAnnots := wantsPod.Annotations; len(wantsPodAnnots) > 0 {
+				ss.Spec.Template.ObjectMeta.Annotations = mergeStatefulSetLabelsOrAnnots(ss.Spec.Template.ObjectMeta.Annotations, wantsPodAnnots, tailscaleManagedAnnotations)
+			}
+			ss.Spec.Template.Spec.SecurityContext = wantsPod.SecurityContext
+			ss.Spec.Template.Spec.ImagePullSecrets = wantsPod.ImagePullSecrets
+			ss.Spec.Template.Spec.NodeName = wantsPod.NodeName
+			ss.Spec.Template.Spec.NodeSelector = wantsPod.NodeSelector
+			if wantsPod.Affinity != nil {
+				ss.Spec.Template.Spec.Affinity = wantsPod.Affinity
+			}
+			ss.Spec.Template.Spec.Tolerations = wantsPod.Tolerations
+			ss.Spec.Template.Spec.PriorityClassName = wantsPod.PriorityClassName
+			ss.Spec.Template.Spec.TopologySpreadConstraints = wantsPod.TopologySpreadConstraints
+			if wantsPod.DNSPolicy != nil {
+				ss.Spec.Template.Spec.DNSPolicy = *wantsPod.DNSPolicy
+			}
+			if wantsPod.DNSConfig != nil {
+				ss.Spec.Template.Spec.DNSConfig = wantsPod.DNSConfig
+			}
 
-		for _, e := range overlay.Env {
-			// Env vars configured via ProxyClass might override env
-			// vars that have been specified by the operator, i.e
-			// TS_USERSPACE. The intended behaviour is to allow this
-			// and in practice it works without explicitly removing
-			// the operator configured value here as a later value
-			// in the env var list overrides an earlier one.
-			base.Env = append(base.Env, corev1.EnvVar{Name: string(e.Name), Value: e.Value})
-		}
-		if overlay.Image != "" {
-			base.Image = overlay.Image
-		}
-		if overlay.ImagePullPolicy != "" {
-			base.ImagePullPolicy = overlay.ImagePullPolicy
-		}
-		return base
-	}
-	for i, c := range ss.Spec.Template.Spec.Containers {
-		if isMainContainer(&c) {
-			ss.Spec.Template.Spec.Containers[i] = updateContainer(wantsPod.TailscaleContainer, ss.Spec.Template.Spec.Containers[i])
-			break
-		}
-	}
-	if initContainers := ss.Spec.Template.Spec.InitContainers; len(initContainers) > 0 {
-		for i, c := range initContainers {
-			if c.Name == "sysctler" {
-				ss.Spec.Template.Spec.InitContainers[i] = updateContainer(wantsPod.TailscaleInitContainer, initContainers[i])
-				break
+			// Update containers.
+			updateContainer := func(overlay *tsapi.Container, base corev1.Container) corev1.Container {
+				if overlay == nil {
+					return base
+				}
+				if overlay.SecurityContext != nil {
+					base.SecurityContext = overlay.SecurityContext
+				}
+
+				if len(overlay.Resources.Requests) > 0 {
+					base.Resources.Requests = overlay.Resources.Requests
+				}
+				if len(overlay.Resources.Limits) > 0 {
+					base.Resources.Limits = overlay.Resources.Limits
+				}
+				if len(overlay.Resources.Claims) > 0 {
+					base.Resources.Limits = overlay.Resources.Limits
+				}
+
+				for _, e := range overlay.Env {
+					// Env vars configured via ProxyClass might override env
+					// vars that have been specified by the operator, i.e
+					// TS_USERSPACE. The intended behaviour is to allow this
+					// and in practice it works without explicitly removing
+					// the operator configured value here as a later value
+					// in the env var list overrides an earlier one.
+					base.Env = append(base.Env, corev1.EnvVar{Name: string(e.Name), Value: e.Value})
+				}
+				if overlay.Image != "" {
+					base.Image = overlay.Image
+				}
+				if overlay.ImagePullPolicy != "" {
+					base.ImagePullPolicy = overlay.ImagePullPolicy
+				}
+				return base
+			}
+			for i, c := range ss.Spec.Template.Spec.Containers {
+				if isMainContainer(&c) {
+					ss.Spec.Template.Spec.Containers[i] = updateContainer(wantsPod.TailscaleContainer, ss.Spec.Template.Spec.Containers[i])
+					break
+				}
+			}
+			if initContainers := ss.Spec.Template.Spec.InitContainers; len(initContainers) > 0 {
+				for i, c := range initContainers {
+					if c.Name == "sysctler" {
+						ss.Spec.Template.Spec.InitContainers[i] = updateContainer(wantsPod.TailscaleInitContainer, initContainers[i])
+						break
+					}
+				}
 			}
 		}
 	}
+
+	if ss.Spec.Template.Spec.Affinity == nil &&
+		stsCfg != nil &&
+		stsCfg.ParentResourceNamespace != "" &&
+		stsCfg.ClusterTargetIP != "" &&
+		len(stsCfg.ClusterTargetServiceSelector) > 0 &&
+		!proxyClassExplicitlySetsAffinity(pc) {
+		ss.Spec.Template.Spec.Affinity = affinityFromServiceSelector(stsCfg.ParentResourceNamespace, stsCfg.ClusterTargetServiceSelector)
+	}
 	return ss
+}
+
+func proxyClassExplicitlySetsAffinity(pc *tsapi.ProxyClass) bool {
+	return pc != nil &&
+		pc.Spec.StatefulSet != nil &&
+		pc.Spec.StatefulSet.Pod != nil &&
+		pc.Spec.StatefulSet.Pod.Affinity != nil
+}
+
+func affinityFromServiceSelector(namespace string, selector map[string]string) *corev1.Affinity {
+	if namespace == "" || len(selector) == 0 {
+		return nil
+	}
+	return &corev1.Affinity{
+		PodAffinity: &corev1.PodAffinity{
+			PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
+				{
+					Weight: 100,
+					PodAffinityTerm: corev1.PodAffinityTerm{
+						LabelSelector: &metav1.LabelSelector{
+							MatchLabels: selector,
+						},
+						Namespaces:  []string{namespace},
+						TopologyKey: "kubernetes.io/hostname",
+					},
+				},
+			},
+		},
+	}
 }
 
 func enableEndpoints(ss *appsv1.StatefulSet, metrics, debug bool) {
